@@ -2,58 +2,67 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_HOST_IP = "3.106.246.219"
+        DOCKER_SERVER_IP = "3.106.246.219"   // second EC2 public IP
         SSH_USER = "ec2-user"
-        IMAGE_NAME = "myapp"
+        IMAGE_NAME = "jenkins-demo-image"
+        CONTAINER_NAME = "jenkins-demo-container"
     }
 
     stages {
 
-        stage('Clone Repo') {
+        stage('Checkout Code') {
             steps {
-                git 'https://github.com/Shubham-3177/jenkins-docker-setup.git'
+                checkout scm
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Copy Files to Docker Server') {
             steps {
-                sh '''
-                docker build -t $IMAGE_NAME .
-                '''
-            }
-        }
-
-        stage('Send Image to Docker Server') {
-            steps {
-                sh '''
-                docker save $IMAGE_NAME | ssh $SSH_USER@$DOCKER_HOST_IP docker load
-                '''
+                sh """
+                scp -o StrictHostKeyChecking=no Dockerfile index.html \
+                ${SSH_USER}@${DOCKER_SERVER_IP}:/home/ec2-user/
+                """
             }
         }
 
         stage('Install Docker on Target (if needed)') {
             steps {
-                sh '''
-                ssh $SSH_USER@$DOCKER_HOST_IP "
+                sh """
+                ssh ${SSH_USER}@${DOCKER_SERVER_IP} '
                 sudo yum install docker -y || true
                 sudo systemctl start docker
                 sudo systemctl enable docker
                 sudo usermod -aG docker ec2-user
-                "
-                '''
+                '
+                """
             }
         }
 
-        stage('Run Container') {
+        stage('Docker Build') {
             steps {
-                sh '''
-                ssh $SSH_USER@$DOCKER_HOST_IP "
-                docker rm -f myapp || true
-                docker run -d -p 80:80 --name myapp $IMAGE_NAME
-                "
-                '''
+                sh """
+                ssh ${SSH_USER}@${DOCKER_SERVER_IP} '
+                docker build -t ${IMAGE_NAME} .
+                '
+                """
+            }
+        }
+
+        stage('Docker Run') {
+            steps {
+                sh """
+                ssh ${SSH_USER}@${DOCKER_SERVER_IP} '
+                docker rm -f ${CONTAINER_NAME} || true
+                docker run -d -p 80:80 --name ${CONTAINER_NAME} ${IMAGE_NAME}
+                '
+                """
             }
         }
     }
-}
 
+    post {
+        success {
+            echo "🚀 Docker container running successfully on second EC2!"
+        }
+    }
+}
